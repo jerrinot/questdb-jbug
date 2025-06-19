@@ -136,18 +136,56 @@ Date:   Mon Apr 28 16:29:15 2014 -0700
 ## Core Philosophy
 
 1. **No Allocation on Hot-Path**
-2. **No 3rd party Java libraries**
-3. **Know your memory layout**
-4. **Basic infrastructure MUST NOT allocate**
+2. **Know your memory layout**
+3. **Basic infrastructure MUST NOT allocate**
+4. **No 3rd party Java libraries**
+
+---
+# Why Zero-GC?
+## We have ZGC, Shenandoah, Azul C4 but...
+- Concurrent collectors still cost CPU cycles
+- And memory bandwidth
+- And application throughput (barriers)
+
+## The founder has a background in High Frequency Trading
 
 ---
 
 # What This Led To...
 
-- **Own standard library** - (Almost) complete replacement of Java's stdlib
+- **Own standard library** - Replacement of Java's stdlib
 - **C-like code patterns** - Direct memory management
-- **Strategic JNI usage** - JNI is NOT slow!
 - **Object pooling** - Fast single-threaded pools
+- **Strategic JNI usage** - JNI is **NOT** slow!
+
+---
+
+# Frontend vs Backend Memory Strategy
+
+<div class="columns">
+<div>
+
+## Frontend
+- **Parser, Planner, Optimizer**
+- Uses **Object Pooling**
+- Temporary AST nodes
+- Pure Java objects
+- Fast allocation/deallocation
+
+</div>
+<div>
+
+## Backend
+- **Runtime, JIT, Storage**
+- Uses **Off-heap Memory**
+- Long-lived data
+- Direct memory addresses
+- Easy JNI communication
+
+</div>
+</div>
+
+**Different parts, different strategies!**
 
 ---
 
@@ -162,35 +200,6 @@ Date:   Mon Apr 28 16:29:15 2014 -0700
 3. **Strings** - CharSequence-based, not String
 4. **Numbers** - Fast parsing/printing
 
-
----
-
-# Frontend vs Backend Memory Strategy
-
-<div class="columns">
-<div>
-
-## Frontend (Java)
-- **Parser, Planner, Optimizer**
-- Uses **Object Pooling**
-- Temporary AST nodes
-- Pure Java objects
-- Fast allocation/deallocation
-
-</div>
-<div>
-
-## Backend (Execution)
-- **Runtime, JIT, Storage**
-- Uses **Off-heap Memory**
-- Long-lived data
-- Direct memory addresses
-- Easy JNI communication
-
-</div>
-</div>
-
-**Different parts, different strategies!**
 
 ---
 # Technique #1: Zero Allocation, Example #1
@@ -248,7 +257,7 @@ public CharSequence getStrA(Record rec) {
 
 # Technique #2: Off-Heap Memory
 
-## Direct Memory Access
+Direct Memory Access
 ```java
 // Allocate off-heap memory
 long ptr = Unsafe.malloc(size);
@@ -265,6 +274,61 @@ Unsafe.free(ptr);
 - Predictable memory layout
 - Cache-friendly access patterns
 
+---
+
+# Memory-Mapped Files (mmap)
+
+```java
+// Map file directly into memory
+long ptr = Files.mmap(fd, size, Files.MAP_RW);
+
+// Read data directly from memory address
+long value = Unsafe.getUnsafe().getLong(ptr + offset);
+
+// Write data directly to memory address
+Unsafe.getUnsafe().putLong(ptr + offset, newValue);
+
+```
+**Benefits:**
+- **Zero-copy** - No data copying between kernel/userspace
+- **Simple** - Kernel handles paging
+
+
+---
+
+# Flyweight Pattern with Off-heap
+
+```java
+public class FlyweightDirectUtf16Sink implements CharSequence {
+    private long ptr;  // Start of memory region
+    private long lo;   // Current position
+    private long hi;   // End of memory region
+    
+    // Point to existing memory - no allocation!
+    public FlyweightDirectUtf16Sink of(long start, long end) {
+        this.ptr = start;
+        this.lo = start;
+        this.hi = end;
+        return this;
+    }
+    
+    // Direct memory access
+    public char charAt(int index) {
+        return Unsafe.getUnsafe().getChar(ptr + index * 2L);
+    }
+    
+    [...]
+}
+```
+
+**Key insight:** Same object, different memory regions!
+
+---
+
+## Offheap memory recap
+
+- **No GC pressure** - Off-heap data is not tracked by the GC
+- **Memory layout control** - Cache-friendly, predictable access
 ---
 
 # What is SIMD? Single Instruction, Multiple Data
@@ -363,6 +427,14 @@ Issue	8353296
 
 ---
 
+![bg fit](ir.png)
+
+---
+
+![bg fit](jit.png)
+
+---
+
 # JIT Performance Impact
 
 ## Real Query Example
@@ -372,12 +444,11 @@ WHERE total_amount > 150
 AND pickup_datetime IN ('2009-01')
 ```
 
-**Results on 13.5M rows:**
+**Single-thread scanning 13.5M rows (out of 1.6B total rows):**
 - Without JIT: 150ms (hot run)
 - With JIT: 35ms (hot run)
 - **76% reduction** in execution time
 - **3.3 GB/s** filtering rate
-
 ---
 
 # Pre-JIT vs JIT Filtering
@@ -398,7 +469,6 @@ AND pickup_datetime IN ('2009-01')
 - Direct machine code
 - Vectorized (8 rows at once)
 - No virtual calls
-- Page frame processing
 
 </div>
 </div>
@@ -407,9 +477,6 @@ AND pickup_datetime IN ('2009-01')
 
 ---
 
-![bg fit](jit.png)
-
----
 
 # Technique #5: Runtime Bytecode Generation
 
@@ -531,11 +598,12 @@ SELECT sensor, max(temperature) FROM readings GROUP BY sensor
 ```
 
 ```
-Input Data          HashMap
+Input Data          Output Map
 ┌─────────┐        ┌──────────┐
-│ Row 1   │───────►│ Key1: 10 │
-│ Row 2   │        │ Key2: 25 │
-│ Row 3   │        │ Key3: 15 │
+│ NYC, 23 │───────►│ NYC: 23  │
+│ SFO, 32 │        │ SFO: 32  │
+│ NYC, 21 │        │          │
+│ NYC, 22 │        │          │
 │ ...     │        │ ...      │
 │ Row N   │        └──────────┘
 └─────────┘         
