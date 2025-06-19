@@ -114,7 +114,7 @@ Let's explore why we chose Java and how we made it work for high-performance com
 - **Community** - People who know it well
 - **Tooling** - Excellent profilers, debuggers, IDEs
 - **JIT Compiler** - Adaptive optimization at runtime 
-- **Strong Type System** - Catches (some) bugs early
+
 ---
 
 # But also: Rust wasn’t an option yet
