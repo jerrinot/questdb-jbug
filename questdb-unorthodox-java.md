@@ -48,7 +48,7 @@ QuestDB Engineering Team
 - **Jaromir Hamala** - QuestDB Engineering Team
 - Passion for concurrency, performance, and distributed systems
 - Working on QuestDB
-- Before: Hazelcast, C2B2 - the birtnest of Payara AS
+- Before: Hazelcast, C2B2 - the birthplace of Payara AS
 
 ---
 
@@ -118,8 +118,7 @@ Let's explore why we chose Java and how we made it work for high-performance com
 - **Strong Type System** - Catches (some) bugs early
 ---
 
-# But also:
-
+# But also: Rust wasn’t an option yet
 ```
 commit 95b8095427c4e2c7814ad56d06b5fc65f6685130
 Author: bluestreak01 <bluestreak@gmail.com>
@@ -137,7 +136,7 @@ Date:   Mon Apr 28 16:29:15 2014 -0700
 
 1. **No Allocation on Hot-Path**
 2. **Know your memory layout**
-3. **Basic infrastructure MUST NOT allocate**
+3. **Core infrastructure MUST NOT allocate**
 4. **No 3rd party Java libraries**
 
 ---
@@ -195,7 +194,7 @@ Date:   Mon Apr 28 16:29:15 2014 -0700
 
 # What Our Stdlib Provides
 
-1. **I/O** - Network and file operations, including IO_URing
+1. **I/O** - Network and file operations, including io_uring
 2. **Collections** - Specialized for primitives (no boxing!)
 3. **Strings** - CharSequence-based, not String
 4. **Numbers** - Fast parsing/printing
@@ -587,9 +586,9 @@ public boolean hasNext() {
 
 # JIT Filtering
 
--Direct machine code
--Vectorized (8 rows at once)
--No virtual calls
+- Direct machine code
+- Vectorized (8 rows at once)
+- No virtual calls
 
 
 ![bg fit right ](filter.png)
@@ -825,7 +824,7 @@ Key → Shard: hash(key) % 4
 # Sharded GROUP BY - Parallel Merge
 
 ```
-Thread 1    Thread 2    Thread 3    Thread 3        Final Result
+ Thread 0   Thread 1    Thread 2    Thread 3       Final Result
 ┌──────┐    ┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
 │Shard0│────│Shard0│────│Shard0│────│Shard0│──────►│ Result0 │
 └──────┘    └──────┘    └──────┘    └──────┘       └─────────┘

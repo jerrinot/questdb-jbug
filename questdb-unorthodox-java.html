@@ -128,7 +128,7 @@ blockquote {
 <li><strong>Jaromir Hamala</strong> - QuestDB Engineering Team</li>
 <li>Passion for concurrency, performance, and distributed systems</li>
 <li>Working on QuestDB</li>
-<li>Before: Hazelcast, C2B2 - the birtnest of Payara AS</li>
+<li>Before: Hazelcast, C2B2 - the birthplace of Payara AS</li>
 </ul>
 </section>
 </foreignObject></svg><svg data-marpit-svg="" viewBox="0 0 1280 720"><foreignObject width="1280" height="720"><section id="3" data-paginate="true" data-background-color="#ffffff" data-color="#333333" data-theme="default" data-style="section {
@@ -516,7 +516,7 @@ blockquote {
   gap: 1em;
 }
 ;color:#333333;background-color:#ffffff;background-image:none;" data-marpit-pagination-total="57">
-<h1 id="but-also">But also:</h1>
+<h1 id="but-also-rust-wasnt-an-option-yet">But also: Rust wasn’t an option yet</h1>
 <pre is="marp-pre" data-auto-scaling="downscale-only"><code>commit 95b8095427c4e2c7814ad56d06b5fc65f6685130
 Author: bluestreak01 &lt;bluestreak@gmail.com&gt;
 Date:   Mon Apr 28 16:29:15 2014 -0700
@@ -585,7 +585,7 @@ blockquote {
 <ol>
 <li><strong>No Allocation on Hot-Path</strong></li>
 <li><strong>Know your memory layout</strong></li>
-<li><strong>Basic infrastructure MUST NOT allocate</strong></li>
+<li><strong>Core infrastructure MUST NOT allocate</strong></li>
 <li><strong>No 3rd party Java libraries</strong></li>
 </ol>
 </section>
@@ -989,7 +989,7 @@ blockquote {
 ;color:#333333;background-color:#ffffff;background-image:none;" data-marpit-pagination-total="57">
 <h1 id="what-our-stdlib-provides">What Our Stdlib Provides</h1>
 <ol>
-<li><strong>I/O</strong> - Network and file operations, including IO_URing</li>
+<li><strong>I/O</strong> - Network and file operations, including io_uring</li>
 <li><strong>Collections</strong> - Specialized for primitives (no boxing!)</li>
 <li><strong>Strings</strong> - CharSequence-based, not String</li>
 <li><strong>Numbers</strong> - Fast parsing/printing</li>
@@ -2811,9 +2811,11 @@ blockquote {
 }
 ;color:#333333;background-color:#ffffff;background-image:none;--marpit-advanced-background-split:50%;" data-marpit-pagination-total="57" data-marpit-advanced-background="content" data-marpit-advanced-background-split="right">
 <h1 id="jit-filtering">JIT Filtering</h1>
-<p>-Direct machine code<br />
--Vectorized (8 rows at once)<br />
--No virtual calls</p>
+<ul>
+<li>Direct machine code</li>
+<li>Vectorized (8 rows at once)</li>
+<li>No virtual calls</li>
+</ul>
 
 <p><strong>11K lines of code, 250+ commits to build it!</strong></p>
 </section>
@@ -3750,7 +3752,7 @@ blockquote {
 }
 ;color:#333333;background-color:#ffffff;background-image:none;" data-marpit-pagination-total="57">
 <h1 id="sharded-group-by---parallel-merge">Sharded GROUP BY - Parallel Merge</h1>
-<pre is="marp-pre" data-auto-scaling="downscale-only"><code>Thread 1    Thread 2    Thread 3    Thread 3        Final Result
+<pre is="marp-pre" data-auto-scaling="downscale-only"><code> Thread 0   Thread 1    Thread 2    Thread 3       Final Result
 ┌──────┐    ┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
 │Shard0│────│Shard0│────│Shard0│────│Shard0│──────►│ Result0 │
 └──────┘    └──────┘    └──────┘    └──────┘       └─────────┘
