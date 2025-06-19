@@ -40,15 +40,15 @@ style: |
 **Jaromir Hamala**
 QuestDB Engineering Team
 
-![bg right:30% 80%](https://github.com/questdb/questdb/raw/main/.github/logo-readme.jpg)
 
 ---
 
 # About Me
 
-- **Jaromir Hamala** - QuestDB Core Engineering Team
+- **Jaromir Hamala** - QuestDB Engineering Team
 - Passion for concurrency, performance, and distributed systems
 - Working on QuestDB
+- Before: Hazelcast, C2B2 - the birtnest of Payara AS
 
 ---
 
@@ -329,6 +329,85 @@ public class FlyweightDirectUtf16Sink implements CharSequence {
 
 - **No GC pressure** - Off-heap data is not tracked by the GC
 - **Memory layout control** - Cache-friendly, predictable access
+
+---
+
+# Memory Layout Matters
+
+## Row vs Columnar Storage
+
+---
+
+# Traditional Row Storage
+
+```
+┌─────────────────────────────────────────────┐
+│ Row 1: [id=1, sensor='A', temp=23.5, ts=t1] │
+├─────────────────────────────────────────────┤
+│ Row 2: [id=2, sensor='B', temp=24.1, ts=t2] │
+├─────────────────────────────────────────────┤
+│ Row 3: [id=3, sensor='A', temp=23.8, ts=t3] │
+├─────────────────────────────────────────────┤
+│ Row 4: [id=4, sensor='C', temp=22.9, ts=t4] │
+└─────────────────────────────────────────────┘
+```
+
+**Problem for analytics:**
+- To read all temperatures, must skip over other fields
+- Poor cache utilization
+- Can't use SIMD effectively
+
+---
+
+# Columnar Storage
+
+```
+id column:     [1, 2, 3, 4, ...]
+sensor column: ['A', 'B', 'A', 'C', ...]
+temp column:   [23.5, 24.1, 23.8, 22.9, ...]
+ts column:     [t1, t2, t3, t4, ...]
+```
+
+**Benefits:**
+- Read only what you need
+- Sequential memory access
+- Cache-friendly
+- SIMD operations on entire columns
+
+---
+
+# QuestDB's Secret: Time Ordering
+
+```
+Traditional Columnar (unordered):
+temp: [24.1, 22.9, 23.5, 23.8, ...]  ← Random time order
+
+QuestDB Columnar (time-ordered):
+temp: [22.9, 23.5, 23.8, 24.1, ...]
+       ↑                        ↑
+    Oldest                  Newest
+```
+
+**Key Invariant:** All columns are **physically sorted by time**
+
+---
+
+# Why Time Ordering Matters
+
+## Efficient Time Filtering
+```sql
+SELECT avg(temp) FROM sensors 
+WHERE ts > now() - '1h'
+```
+
+- **Binary search** to find time range start
+- Sequential read of recent data
+- No index needed!
+
+## Cache Locality
+- Recent data (most queried) stays hot in cache
+- Natural prefetching for sequential access
+
 ---
 
 # What is SIMD? Single Instruction, Multiple Data
@@ -353,7 +432,7 @@ a[3] + b[3] = c[3]  ← One operation
 **AVX512:** 512-bit registers
 
 ---
-# SIMD in Java I
+# Explicit SIMD in Java I
 ```
 JEP 338: Vector API (Incubator)
 Authors	Vladimir Ivanov, Razvan Lupusoru, Paul Sandoz, Sandhya Viswanathan
@@ -375,9 +454,9 @@ Issue	8201271
 ```
 
 ---
-# SIMD in Java II
+# Explicit SIMD in Java II
 ```
-JEP 508: Vector API (**Tenth** Incubator)
+JEP 508: Vector API (******Tenth****** Incubator)
 Owner	Ian Graves
 Type	Feature
 Scope	JDK
@@ -412,6 +491,8 @@ Issue	8353296
 ---
 
 # Technique #4: Our Own JIT Compiler! 🚀
+<div class="columns">
+<div>
 
 ## SQL JIT Architecture
 
@@ -423,7 +504,36 @@ Issue	8353296
 - Uses **asmjit** library
 - Emits x86-64 machine code
 - AVX2 vectorization
-- 58 instructions for simple filters!
+</div>
+<div>
+
+```
+SQL Query: WHERE total_amount > 150
+                    ↓
+┌─────────────────────────────────────────┐
+│           Frontend (Java)               │
+├─────────────────────────────────────────┤
+│ 1. Parse filter expression              │
+│ 2. Analyze suitability for JIT          │
+│ 3. Build Abstract Syntax Tree (AST)     │
+│ 4. Serialize to Intermediate Rep (IR)   │
+└─────────────────┬───────────────────────┘
+                  │ IR + Metadata
+                  ↓
+┌─────────────────────────────────────────┐
+│           Backend (C++)                 │
+├─────────────────────────────────────────┤
+│ 1. Parse IR from Java frontend          │
+│ 2. Generate x86-64 machine code         │
+│ 3. Use AVX2 SIMD instructions           │
+│ 4. Return function pointer to Java      │
+└─────────────────┬───────────────────────┘
+                  │ Native function pointer
+                  ↓
+    Vectorized filter processes 8 rows at once!
+```
+</div>
+</div>
 
 ---
 
@@ -449,29 +559,40 @@ AND pickup_datetime IN ('2009-01')
 - With JIT: 35ms (hot run)
 - **76% reduction** in execution time
 - **3.3 GB/s** filtering rate
+
+## Live DEMO
 ---
 
-# Pre-JIT vs JIT Filtering
+# Pre-JIT Filtering
 
-<div class="columns">
-<div>
-
-## Pre-JIT (Java)
 - Operator function call tree
 - Row-by-row processing
 - Virtual method calls
 - Interpreted execution
 
-</div>
-<div>
+```java
+public boolean hasNext() {
+    while (base.hasNext()) {
+        if (filter.getBool(record)) {
+            return true;
+        }
+    }
+    return false;
+}
+```
 
-## With JIT
-- Direct machine code
-- Vectorized (8 rows at once)
-- No virtual calls
+![bg fit right ](tree.webp)
 
-</div>
-</div>
+---
+
+# JIT Filtering
+
+-Direct machine code
+-Vectorized (8 rows at once)
+-No virtual calls
+
+
+![bg fit right ](filter.png)
 
 **11K lines of code, 250+ commits to build it!**
 
@@ -599,33 +720,57 @@ SELECT sensor, max(temperature) FROM readings GROUP BY sensor
 
 ```
 Input Data          Output Map
-┌─────────┐        ┌──────────┐
-│ NYC, 23 │───────►│ NYC: 23  │
-│ SFO, 32 │        │ SFO: 32  │
-│ NYC, 21 │        │          │
-│ NYC, 22 │        │          │
-│ ...     │        │ ...      │
-│ Row N   │        └──────────┘
+┌─────────┐                ┌──────────┐
+│ NYC, 23 │───────────────►│ NYC: 23  │
+│ SFO, 32 │  Single Worker │ SFO: 32  │
+│ NYC, 21 │                │ ...      │
+│ NYC, 22 │                │ ...      │
+│ ...     │                │ ...      │
+│ Row N   │                └──────────┘
 └─────────┘         
-   ↓
-Single Thread
 ```
 
 **Problem:** Only uses one CPU core!
 
 ---
 
+# Concurrent GROUP BY?
+
+```sql
+SELECT sensor, max(temperature) FROM readings GROUP BY sensor
+```
+
+```
+Input Data
+┌─────────┐ worker0  ┌────────────────┐
+│Partition│─────────►│ SFO: 32        │
+│   1     │          │ NYC: 23        │
+├─────────┤ worker1  │ ....           │
+│Partition│─────────►│ ....           │ 
+│   2     │          │ ....           │
+├─────────┤ worker2  │ ....           │ 
+│Partition│─────────►│ ....           │
+│   3     │          └────────────────┘      
+└─────────┘            Concurrent Map
+```
+
+**Problem:** Contention on shared map
+## Single Writer Principle Violated!
+
+---
+
+
 # Naive Parallel GROUP BY I
 
 ```
 Input Data
-┌─────────┐ worker1  ┌─────────┐
+┌─────────┐ worker0  ┌─────────┐
 │Partition│─────────►│HashMap 1│
 │   1     │          └─────────┘
-├─────────┤ worker2  ┌─────────┐
+├─────────┤ worker1  ┌─────────┐
 │Partition│─────────►│HashMap 2│
 │   2     │          └─────────┘
-├─────────┤ worker3  ┌─────────┐
+├─────────┤ worker2  ┌─────────┐
 │Partition│─────────►│HashMap 3│
 │   3     │          └─────────┘      
 └─────────┘      
@@ -640,13 +785,13 @@ Input Data
 
 ```
 Input Data
-┌─────────┐ worker1  ┌─────────┐
+┌─────────┐ worker0  ┌─────────┐
 │Partition│─────────►│HashMap 1│ \
 │   1     │          └─────────┘  \
-├─────────┤ worker2  ┌─────────┐   \   merge  ┌─────────┐
+├─────────┤ worker1  ┌─────────┐   \   merge  ┌─────────┐
 │Partition│─────────►│HashMap 2│    ──────────│  Result │
 │   2     │          └─────────┘   /          └─────────┘
-├─────────┤ worker3  ┌─────────┐  /     
+├─────────┤ worker2  ┌─────────┐  /     
 │Partition│─────────►│HashMap 3│ /      
 │   3     │          └─────────┘      
 └─────────┘      
@@ -662,15 +807,15 @@ Input Data
 ```
 Each worker creates multiple small maps (shards):
 
-Thread 1          Thread 2         Thread 3
-┌──────┐         ┌──────┐         ┌──────┐
-│Shard0│         │Shard0│         │Shard0│
-│Shard1│         │Shard1│         │Shard1│
-│Shard2│         │Shard2│         │Shard2│
-│Shard3│         │Shard3│         │Shard3│
-└──────┘         └──────┘         └──────┘
+  Worker 0          Worker 1         Worker 2         Worker 3
+┌──────────┐      ┌──────────┐     ┌──────────┐     ┌──────────┐
+│Map Shard0│      │Map Shard0│     │Map Shard0│     │Map Shard0│
+│Map Shard1│      │Map Shard1│     │Map Shard1│     │Map Shard1│
+│Map Shard2│      │Map Shard2│     │Map Shard2│     │Map Shard2│
+│Map Shard3│      │Map Shard3│     │Map Shard3│     │Map Shard3│
+└──────────┘      └──────────┘     └──────────┘     └──────────┘
 
-Key → Shard: hash(key) & 3
+Key → Shard: hash(key) % 4
 ```
 
 **Key property:** Each key always maps to the same shard number!
@@ -680,101 +825,23 @@ Key → Shard: hash(key) & 3
 # Sharded GROUP BY - Parallel Merge
 
 ```
-Thread 1    Thread 2    Thread 3        Final Result
-┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
-│Shard0│────│Shard0│────│Shard0│──────►│ Result0 │
-└──────┘    └──────┘    └──────┘       └─────────┘
-┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
-│Shard1│────│Shard1│────│Shard1│──────►│ Result1 │
-└──────┘    └──────┘    └──────┘       └─────────┘
-┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
-│Shard2│────│Shard2│────│Shard2│──────►│ Result2 │
-└──────┘    └──────┘    └──────┘       └─────────┘
-┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
-│Shard3│────│Shard3│────│Shard3│──────►│ Result3 │
-└──────┘    └──────┘    └──────┘       └─────────┘
+Thread 1    Thread 2    Thread 3    Thread 3        Final Result
+┌──────┐    ┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
+│Shard0│────│Shard0│────│Shard0│────│Shard0│──────►│ Result0 │
+└──────┘    └──────┘    └──────┘    └──────┘       └─────────┘
+┌──────┐    ┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
+│Shard1│────│Shard1│────│Shard1│────│Shard1│──────►│ Result1 │
+└──────┘    └──────┘    └──────┘    └──────┘       └─────────┘
+┌──────┐    ┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
+│Shard2│────│Shard2│────│Shard2│────│Shard2│──────►│ Result2 │
+└──────┘    └──────┘    └──────┘    └──────┘       └─────────┘
+┌──────┐    ┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
+│Shard3│────│Shard3│────│Shard3│────│Shard3│──────►│ Result3 │
+└──────┘    └──────┘    └──────┘    └──────┘       └─────────┘
 ```
 
 **4 parallel merges instead of 1!** No key appears in multiple results.
 **Result:** No single-threaded bottleneck!
-
----
-
-# Memory Layout Matters
-
-## Row vs Columnar Storage
-
----
-
-# Traditional Row Storage
-
-```
-┌─────────────────────────────────────────────┐
-│ Row 1: [id=1, sensor='A', temp=23.5, ts=t1] │
-├─────────────────────────────────────────────┤
-│ Row 2: [id=2, sensor='B', temp=24.1, ts=t2] │
-├─────────────────────────────────────────────┤
-│ Row 3: [id=3, sensor='A', temp=23.8, ts=t3] │
-├─────────────────────────────────────────────┤
-│ Row 4: [id=4, sensor='C', temp=22.9, ts=t4] │
-└─────────────────────────────────────────────┘
-```
-
-**Problem for analytics:**
-- To read all temperatures, must skip over other fields
-- Poor cache utilization
-- Can't use SIMD effectively
-
----
-
-# Columnar Storage
-
-```
-id column:     [1, 2, 3, 4, ...]
-sensor column: ['A', 'B', 'A', 'C', ...]
-temp column:   [23.5, 24.1, 23.8, 22.9, ...]
-ts column:     [t1, t2, t3, t4, ...]
-```
-
-**Benefits:**
-- Read only what you need
-- Sequential memory access
-- Cache-friendly
-- SIMD operations on entire columns
-
----
-
-# QuestDB's Secret: Time Ordering
-
-```
-Traditional Columnar (unordered):
-temp: [24.1, 22.9, 23.5, 23.8, ...]  ← Random time order
-
-QuestDB Columnar (time-ordered):
-temp: [22.9, 23.5, 23.8, 24.1, ...]
-       ↑                        ↑
-    Oldest                  Newest
-```
-
-**Key Invariant:** All columns are **physically sorted by time**
-
----
-
-# Why Time Ordering Matters
-
-## Efficient Time Filtering
-```sql
-SELECT avg(temp) FROM sensors 
-WHERE ts > now() - '1h'
-```
-
-- **Binary search** to find time range start
-- Sequential read of recent data
-- No index needed!
-
-## Cache Locality
-- Recent data (most queried) stays hot in cache
-- Natural prefetching for sequential access
 
 ---
 
@@ -816,22 +883,6 @@ AND passenger_count = 1
 
 ---
 
-# Key Optimizations
-
-1. **Specialized Hash Tables**
-   - Fixed-size keys (32/64-bit)
-   - No generic overhead
-   
-2. **Vectorized SQL Functions**
-   - LIKE operator with SIMD
-   - Parallel filters
-   
-3. **Custom Memory Allocators**
-   - Arena allocation
-   - Zero fragmentation
-
----
-
 # Time-Series Specifics
 
 ## SAMPLE BY Query
@@ -852,10 +903,10 @@ SAMPLE BY 1h
 # Lessons Learned
 
 1. **Java CAN be fast** - With the right approach
-2. **Measure everything** - Benchmarks guide optimization
+2. **Hardware sympathy** - Know your CPU and memory
 3. **Question conventions** - Standard library isn't sacred
-4. **Hardware sympathy** - Know your CPU and memory
-5. **Batch operations** - Amortize costs
+4. **Batch operations** - Amortize costs
+5. **Measure everything** - Benchmarks guide optimization
 
 ---
 
@@ -863,15 +914,22 @@ SAMPLE BY 1h
 
 ## The Good
 - **Excellent tooling** - Profilers, debuggers, IDEs
-- **Strong type system** - Catches bugs early
 - **JIT compiler** - Adaptive optimization
-- **Mature ecosystem** - Libraries for non-critical paths
 - **Developer productivity** - Fast iteration
 
 ## The Trade-offs
 - Required deep JVM knowledge
 - Built our own infrastructure
-- Careful coding discipline
+- Careful coding discipline - **super important!**
+
+---
+
+# Is it worth it?
+
+- **Maybe?** It works for us!
+- **Depends on your use case** - High-performance, low-latency systems
+- **Java is not the bottleneck** - It's how you use it!
+- **Unorthodox Java** - Yes, but it can be done!
 
 ---
 
@@ -880,7 +938,7 @@ SAMPLE BY 1h
 ## Get Involved!
 - **GitHub:** https://github.com/questdb/questdb
 - **Community:** Active contributors welcome
-- **Use cases:** IoT, Finance, Monitoring, Analytics
+- **Use cases:** Finance, IoT, Monitoring, Analytics
 
 ## Learn More
 - QuestDB documentation
@@ -894,7 +952,7 @@ SAMPLE BY 1h
 ## Thank you! 🙏
 
 **Jaromir Hamala**
-QuestDB Core Engineering Team
+QuestDB Engineering Team
 
 ### Questions?
 
