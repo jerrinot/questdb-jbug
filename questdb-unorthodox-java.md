@@ -134,10 +134,12 @@ Date:   Mon Apr 28 16:29:15 2014 -0700
 
 ## Core Philosophy
 
-1. **No Allocation on Hot-Path**
-2. **Know your memory layout**
-3. **Core infrastructure MUST NOT allocate**
-4. **No 3rd party Java libraries**
+1. No Allocation on Hot-Path
+2. Know your memory layout
+3. Core infrastructure MUST NOT allocate
+4. No 3rd party Java libraries
+
+## The founder has a background in High Frequency Trading
 
 ---
 # Why Zero-GC?
@@ -146,16 +148,50 @@ Date:   Mon Apr 28 16:29:15 2014 -0700
 - And memory bandwidth
 - And application throughput (barriers)
 
-## The founder has a background in High Frequency Trading
-
 ---
 
 # What This Led To...
 
-- **Own standard library** - Replacement of Java's stdlib
-- **C-like code patterns** - Direct memory management
-- **Object pooling** - Fast single-threaded pools
-- **Strategic JNI usage** - JNI is **NOT** slow!
+<div class="columns">
+<div>
+
+## Three Core Disciplines
+
+1. **Memory Discipline** - Zero allocation, off-heap patterns
+2. **Execution Discipline** - Custom JIT, runtime bytecode generation  
+3. **Concurrency Discipline** - Lock-free algorithms, sharding
+</div>
+<div>
+
+
+```
+┌─────────────────────┐
+│ Memory Discipline   │
+├─────────────────────┤
+│ • Zero Allocation   │
+│ • Off-heap Memory   │
+│ • Flyweight Pattern │
+└─────────────────────┘
+        ↓
+┌─────────────────────┐
+│Execution Discipline │
+├─────────────────────┤
+│ • Custom JIT        │
+│ • Runtime Bytecode  │
+│ • SIMD Operations   │
+└─────────────────────┘
+        ↓
+┌──────────────────────┐
+│Concurrency Discipline│
+├──────────────────────┤
+│ • Sharded GROUP BY   │
+│ • Lock-free Design   │
+│ • Single Writer      │
+└──────────────────────┘
+```
+</div>
+</div>
+
 
 ---
 
@@ -166,9 +202,9 @@ Date:   Mon Apr 28 16:29:15 2014 -0700
 
 ## Frontend
 - **Parser, Planner, Optimizer**
+- Pure Java objects (mostly)
 - Uses **Object Pooling**
-- Temporary AST nodes
-- Pure Java objects
+  - Example: AST nodes
 - Fast allocation/deallocation
 
 </div>
@@ -201,7 +237,15 @@ Date:   Mon Apr 28 16:29:15 2014 -0700
 
 
 ---
-# Technique #1: Zero Allocation, Example #1
+
+# DISCIPLINE 1: MEMORY
+
+## The Foundation of Performance
+
+> "The fastest allocation is the one that never happens"
+
+---
+# Memory Technique 1: Zero Allocation
 
 ## Single-threaded pools
 ```java
@@ -222,13 +266,13 @@ expressionNodePool.clear(); // O(1) - just reset position!
 ---
 
 
-# Technique #1: Zero Allocation, Example #2
+# Memory Technique 1b: Zero Allocation
 
 ## Postgres Wire Protocol and `double` columns
 ## **DEMO** - `PGConnectionContext.appendRecord()`
 
 ---
-# Technique #1: Zero Allocation, Example #3
+# Memory Technique 1c: Zero Allocation
 
 IPv4 to String Conversion
 ```sql
@@ -254,7 +298,7 @@ public CharSequence getStrA(Record rec) {
 
 ---
 
-# Technique #2: Off-Heap Memory
+# Memory Technique 2: Off-Heap Memory
 
 Direct Memory Access
 ```java
@@ -324,10 +368,19 @@ public class FlyweightDirectUtf16Sink implements CharSequence {
 
 ---
 
-## Offheap memory recap
+## Memory Discipline Recap
 
 - **No GC pressure** - Off-heap data is not tracked by the GC
 - **Memory layout control** - Cache-friendly, predictable access
+- **Zero allocation** - Reuse, don't recreate
+
+---
+
+# DISCIPLINE 2: EXECUTION
+
+## Making Every CPU Cycle Count
+
+> "Let the machine do what it does best"
 
 ---
 
@@ -475,7 +528,7 @@ Issue	8353296
 ---
 
 
-# Technique #3: Custom JIT with SIMD
+# Execution Technique 1: Custom JIT with SIMD
 
 ## Not Java Vector API - Our Own JIT!
 
@@ -489,7 +542,7 @@ Issue	8353296
 
 ---
 
-# Technique #4: Our Own JIT Compiler! 🚀
+# Execution Technique 1b: JIT Architecture
 <div class="columns">
 <div>
 
@@ -598,7 +651,7 @@ public boolean hasNext() {
 ---
 
 
-# Technique #5: Runtime Bytecode Generation
+# Execution Technique 2: Runtime Bytecode Generation
 
 ## Custom Comparators for ORDER BY
 
@@ -703,7 +756,17 @@ public int compare(Record r) {
 
 ---
 
-# Technique #6: Parallel GROUP BY Evolution
+---
+
+# DISCIPLINE 3: CONCURRENCY
+
+## Scaling Without Contention
+
+> "Share nothing, merge something"
+
+---
+
+# Parallel GROUP BY Evolution
 
 ## The Journey to Scale
 
@@ -718,7 +781,7 @@ SELECT sensor, max(temperature) FROM readings GROUP BY sensor
 ```
 
 ```
-Input Data          Output Map
+Input Data                  Output Map
 ┌─────────┐                ┌──────────┐
 │ NYC, 23 │───────────────►│ NYC: 23  │
 │ SFO, 32 │  Single Worker │ SFO: 32  │
@@ -841,6 +904,39 @@ Key → Shard: hash(key) % 4
 
 **4 parallel merges instead of 1!** No key appears in multiple results.
 **Result:** No single-threaded bottleneck!
+
+---
+
+# The Three Disciplines - Recap
+
+<div class="columns">
+<div>
+
+## Memory Discipline ✓
+- Zero allocation patterns
+- Off-heap memory management
+- Flyweight views
+
+## Execution Discipline ✓
+- Custom JIT compiler
+- Runtime bytecode generation
+- SIMD vectorization
+
+</div>
+<div>
+
+## Concurrency Discipline ✓
+- Sharded algorithms
+- Lock-free design
+- Single writer principle
+
+## Result
+**Millions of rows/sec ingestion**
+**Billions of rows queries**
+**Near-zero GC pauses**
+
+</div>
+</div>
 
 ---
 
