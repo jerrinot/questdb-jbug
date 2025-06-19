@@ -38,7 +38,7 @@ style: |
 ## High-Performance Time-Series Database
 
 **Jaromir Hamala**
-QuestDB Core Engineering Team
+QuestDB Engineering Team
 
 ![bg right:30% 80%](https://github.com/questdb/questdb/raw/main/.github/logo-readme.jpg)
 
@@ -56,7 +56,8 @@ QuestDB Core Engineering Team
 
 - **Open-source time-series database** (Apache License 2.0)
 - SQL with time-series extensions
-- High-speed ingestion: InfluxDB line protocol (TCP/HTTP)
+- PostgreSQL Wire Protocol compatible
+- High-speed ingestion: InfluxDB line protocol
 - Columnar storage format (native or Parquet)
 - Partitioned and ordered by time
 
@@ -83,7 +84,7 @@ QuestDB Core Engineering Team
 
 ## Implementation
 - **90%** Java
-- **10%** C++/Rust
+- **10%** C/C++/Rust
 
 </div>
 <div>
@@ -107,6 +108,29 @@ Let's explore why we chose Java and how we made it work for high-performance com
 
 ---
 
+# Java is great! 
+
+## It gives us
+
+- **Community** - People who know it well
+- **Tooling** - Excellent profilers, debuggers, IDEs
+- **JIT Compiler** - Adaptive optimization at runtime 
+- **Strong Type System** - Catches (some) bugs early
+---
+
+# But also:
+
+```
+commit 95b8095427c4e2c7814ad56d06b5fc65f6685130
+Author: bluestreak01 <bluestreak@gmail.com>
+Date:   Mon Apr 28 16:29:15 2014 -0700
+
+    Initial commit
+```
+
+## **Rust 1.0**, was published on May 15, 2015
+
+---
 # QuestDB Design Principles
 
 ## Core Philosophy
@@ -120,14 +144,12 @@ Let's explore why we chose Java and how we made it work for high-performance com
 
 # What This Led To...
 
-- **Own standard library** - Complete replacement of Java's stdlib
-- **Strategic JNI usage** - JNI is NOT slow!
+- **Own standard library** - (Almost) complete replacement of Java's stdlib
 - **C-like code patterns** - Direct memory management
-- **Object pooling** - Fast single-threaded pools for parsing
+- **Strategic JNI usage** - JNI is NOT slow!
+- **Object pooling** - Fast single-threaded pools
 
 ---
-
-# Our Own Standard Library
 
 ![bg fit](stdlib.png)
 
@@ -135,18 +157,72 @@ Let's explore why we chose Java and how we made it work for high-performance com
 
 # What Our Stdlib Provides
 
-1. **I/O** - Network and file operations
+1. **I/O** - Network and file operations, including IO_URing
 2. **Collections** - Specialized for primitives (no boxing!)
 3. **Strings** - CharSequence-based, not String
 4. **Numbers** - Fast parsing/printing
 
-**Zero dependencies on Java stdlib**
 
 ---
 
-# Technique #1: Zero Allocation
+# Frontend vs Backend Memory Strategy
 
-## IPv4 to String Conversion
+<div class="columns">
+<div>
+
+## Frontend (Java)
+- **Parser, Planner, Optimizer**
+- Uses **Object Pooling**
+- Temporary AST nodes
+- Pure Java objects
+- Fast allocation/deallocation
+
+</div>
+<div>
+
+## Backend (Execution)
+- **Runtime, JIT, Storage**
+- Uses **Off-heap Memory**
+- Long-lived data
+- Direct memory addresses
+- Easy JNI communication
+
+</div>
+</div>
+
+**Different parts, different strategies!**
+
+---
+# Technique #1: Zero Allocation, Example #1
+
+## Single-threaded pools
+```java
+// SqlParser uses object pool for AST nodes
+ObjectPool<ExpressionNode> expressionNodePool;
+
+// Acquire nodes during parsing
+ExpressionNode node = expressionNodePool.next();
+node.of(...);
+
+// Mass release after plan creation
+expressionNodePool.clear(); // O(1) - just reset position!
+```
+
+**Frontend optimization - parse without allocation**
+**Demo: `SqlParser.parseTableName()`**
+
+---
+
+
+# Technique #1: Zero Allocation, Example #2
+
+## Postgres Wire Protocol and `double` columns
+## **DEMO** - `PGConnectionContext.appendRecord()`
+
+---
+# Technique #1: Zero Allocation, Example #3
+
+IPv4 to String Conversion
 ```sql
 SELECT ip_address, CAST(ip_address AS STRING) as ip_str
 ```
@@ -154,16 +230,16 @@ SELECT ip_address, CAST(ip_address AS STRING) as ip_str
 ```java
 // Traditional: Creates garbage for each row
 public String getIPv4String(Record rec) {
-    return IPUtils.formatIPv4(arg.getIPv4(rec)); // New String per row!
+    int ipv4 = arg.getIPv4(rec)
+    String s = IPUtils.formatIPv4(ipv4); // New String per row!
+    return s;
 }
 
 // QuestDB: Reusable StringSink
 private final StringSink sinkA = new StringSink();
-
 public CharSequence getStrA(Record rec) {
-    int ipv4 = arg.getIPv4(rec);  // Returns int
     sinkA.clear();  // Reset, don't allocate!
-    Numbers.intToIPv4Sink(sinkA, ipv4);
+    Numbers.intToIPv4Sink(sinkA, arg.getIPv4(rec));
     return sinkA;
 }
 ```
@@ -190,6 +266,72 @@ Unsafe.free(ptr);
 - Cache-friendly access patterns
 
 ---
+
+# What is SIMD? Single Instruction, Multiple Data
+
+**Traditional (Scalar):**
+```
+a[0] + b[0] = c[0]  ← One operation
+a[1] + b[1] = c[1]  ← One operation  
+a[2] + b[2] = c[2]  ← One operation
+a[3] + b[3] = c[3]  ← One operation
+```
+
+**SIMD (Vectorized):**
+```
+┌───────────────────┐   ┌───────────────────┐   ┌───────────────────┐
+│a[0]│a[1]│a[2]│a[3]│ + │b[0]│b[1]│b[2]│b[3]│ = │c[0]│c[1]│c[2]│c[3]│
+└───────────────────┘   └───────────────────┘   └───────────────────┘
+               ↑ One instruction processes 4 values! ↑
+```
+
+**AVX2:** 256-bit registers = 8 ints or 4 doubles at once!
+**AVX512:** 512-bit registers
+
+---
+# SIMD in Java I
+```
+JEP 338: Vector API (Incubator)
+Authors	Vladimir Ivanov, Razvan Lupusoru, Paul Sandoz, Sandhya Viswanathan
+Owner	Paul Sandoz
+Type	Feature
+Scope	JDK
+Status	Closed / Delivered
+Release	16
+Component	hotspot / compiler
+Discussion	panama dash dev at openjdk dot java dot net
+Effort	M
+Duration	M
+Relates to	JEP 414: Vector API (Second Incubator)
+Reviewed by	John Rose, Maurizio Cimadamore, Yang Zhang
+Endorsed by	John Rose, Vladimir Kozlov
+Created	2018/04/06 22:58
+Updated	2021/08/28 00:15
+Issue	8201271
+```
+
+---
+# SIMD in Java II
+```
+JEP 508: Vector API (**Tenth** Incubator)
+Owner	Ian Graves
+Type	Feature
+Scope	JDK
+Status	Closed / Delivered
+Release	25
+Component	core-libs
+Discussion	panama dash dev at openjdk dot org
+Effort	XS
+Duration	XS
+Relates to	JEP 489: Vector API (Ninth Incubator)
+Reviewed by	Jatin Bhateja, Sandhya Viswanathan, Vladimir Ivanov
+Endorsed by	Paul Sandoz
+Created	2025/03/31 18:19
+Updated	2025/05/21 21:28
+Issue	8353296
+```
+---
+
 
 # Technique #3: Custom JIT with SIMD
 
@@ -265,7 +407,116 @@ AND pickup_datetime IN ('2009-01')
 
 ---
 
-# Technique #5: Parallel GROUP BY Evolution
+![bg fit](jit.png)
+
+---
+
+# Technique #5: Runtime Bytecode Generation
+
+## Custom Comparators for ORDER BY
+
+```sql
+SELECT * FROM readings 
+ORDER BY sensor_id, batch_id DESC, timestamp
+```
+
+**Problem:** Generic comparator with virtual calls is slow!
+
+**Solution:** Generate specialized bytecode at runtime
+
+---
+
+# Traditional Generic Comparator
+
+```java
+public int compare(Record a, Record b, int[] columns, int[] types) {
+    for (int i = 0; i < columns.length; i++) {
+        int col = Math.abs(columns[i]) - 1;
+        boolean desc = columns[i] < 0;
+        int cmp = 0;
+        
+        switch (types[col]) {
+            case STRING:
+                cmp = compareString(a.getStr(col), b.getStr(col));
+                break;
+            case LONG:
+                cmp = Long.compare(a.getLong(col), b.getLong(col));
+                break;
+            case DOUBLE:
+                cmp = Double.compare(a.getDouble(col), b.getDouble(col));
+                break;
+            // ... 20+ more types!
+        }
+        if (desc) cmp = -cmp;
+        if (cmp != 0) return cmp;
+    }
+    return 0;
+}
+```
+
+**Problems:** Type checking overhead, virtual calls, no optimization
+
+---
+
+# QuestDB: Runtime Bytecode Generation
+
+![bg](comparator.png)
+
+---
+
+# Generated Class Structure
+
+```java
+// Generated class for ORDER BY sensor_id, batch_id DESC, timestamp
+public class GeneratedComparator implements RecordComparator {
+    
+    // Fields to cache left record values
+    private int f0;    // sensor_id column
+    private int f1;    // batch_id column  
+    private long f2;   // timestamp column
+    
+    // Cache left record values
+    public void setLeft(Record record) {
+        this.f0 = record.getInt(0);
+        this.f1 = record.getInt(1);
+        this.f2 = record.getLong(2);
+    }
+    
+    // Compare cached left with right record
+    public int compare(Record right) {
+        int cmp = Integer.compare(this.f0, right.getInt(0));
+        if (cmp != 0) return cmp;
+        cmp = -Integer.compare(this.f1, right.getInt(1)); // DESC!
+        if (cmp != 0) return cmp;
+        return Long.compare(this.f2, right.getLong(2));
+    }
+}
+```
+
+---
+# QuestDB: Runtime Bytecode Generation
+
+
+```java
+// Generated at runtime for ORDER BY sensor_id, batch_id DESC, timestamp
+public int compare(Record r) {
+    int cmp = Integer.compare(this.f0, r.getInt(0));
+    if (cmp != 0) return cmp;
+    cmp = -Integer.compare(this.f1, r.getInt(1));
+    if (cmp != 0) return cmp;
+    return Long.compare(this.f2, r.getLong(2));
+}
+```
+
+**RecordComparatorCompiler generates:**
+- Custom class per query
+- Type-specific comparison inlined
+- No switches, no virtual calls, no boxing
+- JVM can optimize this perfectly!
+
+---
+
+# Technique #6: Parallel GROUP BY Evolution
 
 ## The Journey to Scale
 
@@ -338,86 +589,124 @@ Input Data
 
 ---
 
-# Sharded GROUP BY - The Solution
+# Solution: Sharded GROUP BY
 
 ```
-Thread 1          Thread 2          Thread 3
+Each worker creates multiple small maps (shards):
+
+Thread 1          Thread 2         Thread 3
 ┌──────┐         ┌──────┐         ┌──────┐
-│Shard0│         │Shard0│         │Shard0│──┐
-│Shard1│         │Shard1│         │Shard1│  │ Parallel
-│Shard2│         │Shard2│         │Shard2│  │ Merge!
-│Shard3│         │Shard3│         │Shard3│──┘
+│Shard0│         │Shard0│         │Shard0│
+│Shard1│         │Shard1│         │Shard1│
+│Shard2│         │Shard2│         │Shard2│
+│Shard3│         │Shard3│         │Shard3│
 └──────┘         └──────┘         └──────┘
-   ↓                ↓                ↓
-Key → Shard:    hash(key) & 3
+
+Key → Shard: hash(key) & 3
 ```
 
-Each key always goes to the same shard number across all threads!
+**Key property:** Each key always maps to the same shard number!
 
 ---
 
-# Sharded GROUP BY - How It Works
+# Sharded GROUP BY - Parallel Merge
 
-## Phase 1: Parallel Sharded Aggregation
-```java
-// Each worker thread
-for (Row row : partition) {
-    int shardId = hash(row.key) & (NUM_SHARDS - 1);
-    shardMaps[shardId].aggregate(row);
-}
+```
+Thread 1    Thread 2    Thread 3        Final Result
+┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
+│Shard0│────│Shard0│────│Shard0│──────►│ Result0 │
+└──────┘    └──────┘    └──────┘       └─────────┘
+┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
+│Shard1│────│Shard1│────│Shard1│──────►│ Result1 │
+└──────┘    └──────┘    └──────┘       └─────────┘
+┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
+│Shard2│────│Shard2│────│Shard2│──────►│ Result2 │
+└──────┘    └──────┘    └──────┘       └─────────┘
+┌──────┐    ┌──────┐    ┌──────┐       ┌─────────┐
+│Shard3│────│Shard3│────│Shard3│──────►│ Result3 │
+└──────┘    └──────┘    └──────┘       └─────────┘
 ```
 
-## Phase 2: Parallel Shard Merging
-```java
-// Merge same shards from all workers - IN PARALLEL!
-for (int shard = 0; shard < NUM_SHARDS; shard++) {
-    parallelMerge(allWorkerShards[shard]);
-}
-```
-
+**4 parallel merges instead of 1!** No key appears in multiple results.
 **Result:** No single-threaded bottleneck!
 
 ---
 
 # Memory Layout Matters
 
-## Column Storage + Time Ordering
-```
-Traditional Row Storage:
-[id|name|value|timestamp][id|name|value|timestamp]...
-
-QuestDB Column Storage (sorted by time):
-[id|id|id|id...] [name|name|name...] [value|value|value...]
-↑                ↑                    ↑
-Oldest → Newest  Oldest → Newest     Oldest → Newest
-```
-
-**Key Invariant:** Data is **physically sorted by time**
-
-**Benefits:**
-- Efficient time-based filtering (binary search!)
-- Better cache utilization for recent data
-- SIMD-friendly sequential access
-- Natural data locality for time-series queries
+## Row vs Columnar Storage
 
 ---
 
-# Object Pooling Strategy
+# Traditional Row Storage
 
-## Single-threaded pools for parsing
-```java
-// SqlParser uses object pool for AST nodes
-ObjectPool<ExpressionNode> expressionNodePool;
-
-// Acquire nodes during parsing
-ExpressionNode node = expressionNodePool.next();
-node.configure(...);
-
-// Mass release after plan creation
-expressionNodePool.clear(); // O(1) - just reset position!
+```
+┌─────────────────────────────────────────────┐
+│ Row 1: [id=1, sensor='A', temp=23.5, ts=t1] │
+├─────────────────────────────────────────────┤
+│ Row 2: [id=2, sensor='B', temp=24.1, ts=t2] │
+├─────────────────────────────────────────────┤
+│ Row 3: [id=3, sensor='A', temp=23.8, ts=t3] │
+├─────────────────────────────────────────────┤
+│ Row 4: [id=4, sensor='C', temp=22.9, ts=t4] │
+└─────────────────────────────────────────────┘
 ```
 
-**Frontend optimization - parse without allocation**
+**Problem for analytics:**
+- To read all temperatures, must skip over other fields
+- Poor cache utilization
+- Can't use SIMD effectively
+
+---
+
+# Columnar Storage
+
+```
+id column:     [1, 2, 3, 4, ...]
+sensor column: ['A', 'B', 'A', 'C', ...]
+temp column:   [23.5, 24.1, 23.8, 22.9, ...]
+ts column:     [t1, t2, t3, t4, ...]
+```
+
+**Benefits:**
+- Read only what you need
+- Sequential memory access
+- Cache-friendly
+- SIMD operations on entire columns
+
+---
+
+# QuestDB's Secret: Time Ordering
+
+```
+Traditional Columnar (unordered):
+temp: [24.1, 22.9, 23.5, 23.8, ...]  ← Random time order
+
+QuestDB Columnar (time-ordered):
+temp: [22.9, 23.5, 23.8, 24.1, ...]
+       ↑                        ↑
+    Oldest                  Newest
+```
+
+**Key Invariant:** All columns are **physically sorted by time**
+
+---
+
+# Why Time Ordering Matters
+
+## Efficient Time Filtering
+```sql
+SELECT avg(temp) FROM sensors 
+WHERE ts > now() - '1h'
+```
+
+- **Binary search** to find time range start
+- Sequential read of recent data
+- No index needed!
+
+## Cache Locality
+- Recent data (most queried) stays hot in cache
+- Natural prefetching for sequential access
 
 ---
 
@@ -555,18 +844,6 @@ QuestDB Core Engineering Team
 ```bash
 # Docker
 docker run -p 9000:9000 questdb/questdb
-
-# Enable JIT in server.conf
-cairo.sql.jit.mode=on
-
-# Java API
-try (TableWriter writer = engine.getWriter("sensors")) {
-    TableWriter.Row row = writer.newRow();
-    row.putSym(0, "sensor1");
-    row.putDouble(1, 23.5);
-    row.append();
-    writer.commit();
-}
 ```
 
 Visit: http://localhost:9000
