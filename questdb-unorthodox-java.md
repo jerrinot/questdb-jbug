@@ -193,6 +193,13 @@ Date:   Mon Apr 28 16:29:15 2014 -0700
 
 
 ---
+# DISCIPLINE 1: MEMORY
+
+## The Foundation of Performance
+
+> "The fastest allocation is the one that never happens"
+
+---
 
 # Frontend vs Backend Memory Strategy
 
@@ -237,13 +244,6 @@ Date:   Mon Apr 28 16:29:15 2014 -0700
 
 ---
 
-# DISCIPLINE 1: MEMORY
-
-## The Foundation of Performance
-
-> "The fastest allocation is the one that never happens"
-
----
 # Memory Technique 1: Zero Allocation
 
 ## Single-threaded pools
