@@ -58,8 +58,6 @@ QuestDB Engineering Team
 - SQL with time-series extensions
 - PostgreSQL Wire Protocol compatible
 - High-speed ingestion: InfluxDB line protocol
-- Columnar storage format (native or Parquet)
-- Partitioned and ordered by time
 
 **GitHub:** https://github.com/questdb/questdb
 
@@ -528,7 +526,7 @@ Issue	8353296
 ---
 
 
-# Execution Technique 1: Custom JIT with SIMD
+# Execution Technique 1: JIT compiled SIMD filters
 
 ## Not Java Vector API - Our Own JIT!
 
@@ -566,11 +564,11 @@ SQL Query: WHERE total_amount > 150
 │           Frontend (Java)               │
 ├─────────────────────────────────────────┤
 │ 1. Parse filter expression              │
-│ 2. Analyze suitability for JIT          │
-│ 3. Build Abstract Syntax Tree (AST)     │
+│ 2. Build Abstract Syntax Tree (AST)     │
+│ 3. Analyze suitability for JIT          │
 │ 4. Serialize to Intermediate Rep (IR)   │
 └─────────────────┬───────────────────────┘
-                  │ IR + Metadata
+                  │ IR
                   ↓
 ┌─────────────────────────────────────────┐
 │           Backend (C++)                 │
@@ -612,7 +610,7 @@ AND pickup_datetime IN ('2009-01')
 - **76% reduction** in execution time
 - **3.3 GB/s** filtering rate
 
-## Live DEMO
+## Live DEMO (actually faster, because multithreaded)
 ---
 
 # Pre-JIT Filtering
@@ -642,6 +640,8 @@ public boolean hasNext() {
 - Direct machine code
 - Vectorized (8 rows at once)
 - No virtual calls
+- **But**: x86-64 specific, ARM not supported yet
+
 
 
 ![bg fit right ](filter.png)
@@ -702,6 +702,8 @@ public int compare(Record a, Record b, int[] columns, int[] types) {
 
 ![bg](comparator.png)
 
+## Demo: `RecordComparatorCompiler`
+
 ---
 
 # Generated Class Structure
@@ -753,8 +755,6 @@ public int compare(Record r) {
 - Type-specific comparison inlined
 - No switches, no virtual calls, no boxing
 - JVM can optimize this perfectly!
-
----
 
 ---
 
@@ -956,7 +956,6 @@ native void processData(long address, int length);  // Just primitives!
 - Direct memory addresses (long)
 - No object references
 - No GC coordination needed
-- Zero marshalling overhead
 
 **This is why we use off-heap memory!**
 
@@ -1062,6 +1061,9 @@ QuestDB Engineering Team
 
 ## Want to try QuestDB?
 
+Visit: https://demo.questdb.io/index.html
+
+**Or run locally:**
 ```bash
 # Docker
 docker run -p 9000:9000 questdb/questdb
