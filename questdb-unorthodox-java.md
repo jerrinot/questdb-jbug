@@ -60,20 +60,20 @@ QuestDB Engineering Team
 - High-speed ingestion: InfluxDB line protocol
 
 **GitHub:** https://github.com/questdb/questdb
-**Live Demo:** https://demo.questdb.io/index.html
+**Live Demo:** https://demo.questdb.io
 
 ---
 
-# The Numbers 💪
+# The Numbers
 
 ## What do we mean by "high-performance"?
 
 - **Millions** of rows ingested per second
 - Query **billions** of rows efficiently
-- Near-zero GC pauses
 
 > No magic, just hard work and clever engineering
 
+## Demo
 ---
 
 # Language Breakdown
